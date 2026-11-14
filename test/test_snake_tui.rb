@@ -2,8 +2,8 @@
 
 =begin
 Test suite for SnakeTUI (TUI Vim Snake).
-Verifies all acceptance criteria from SPEC.md:
-- Vim keybindings (h/j/k/l, case-insensitive) and ignoring non-Vim keys (arrows/WASD)
+Verifies all acceptance criteria from SPEC.md + arrow key support:
+- Vim keybindings (h/j/k/l, case-insensitive) AND standard arrow keys (Up/Down/Left/Right)
 - 180-degree reversal prevention
 - Food spawning distribution (🔵, 🔴, 🟡, 🟢 23% each = 92%, 🟣 8%) and non-collision with snake body
 - Scoring (+10 standard Google ball, +50 rare purple ball) and snake growth
@@ -34,7 +34,6 @@ class TestSnakeTUI < Minitest::Test
   end
 
   def test_vim_keybindings_lowercase_and_uppercase
-    # Starting direction is :right, so :up ('k') is valid
     @game.handle_key("k")
     @game.tick
     assert_equal :up, @game.direction
@@ -52,24 +51,54 @@ class TestSnakeTUI < Minitest::Test
     assert_equal :right, @game.direction
   end
 
+  def test_arrow_keybindings_csi_and_ss3
+    # Starting :right -> Up (\e[A), Left (\e[D), Down (\e[B), Right (\e[C)
+    @game.handle_key("\e[A")
+    @game.tick
+    assert_equal :up, @game.direction
+
+    @game.handle_key("\e[D")
+    @game.tick
+    assert_equal :left, @game.direction
+
+    @game.handle_key("\e[B")
+    @game.tick
+    assert_equal :down, @game.direction
+
+    @game.handle_key("\e[C")
+    @game.tick
+    assert_equal :right, @game.direction
+
+    # Also test SS3 application-mode sequences (\eOA, \eOD, \eOB, \eOC)
+    @game.handle_key("\eOA")
+    @game.tick
+    assert_equal :up, @game.direction
+
+    @game.handle_key("\eOD")
+    @game.tick
+    assert_equal :left, @game.direction
+  end
+
   def test_prevents_180_degree_reversal
-    # Starting :right -> pressing 'h' (:left) must be ignored
+    # Starting :right -> pressing 'h' or Left Arrow (\e[D) must be ignored
     @game.handle_key("h")
     @game.tick
     assert_equal :right, @game.direction
 
-    # Move :up, then try 'j' (:down) -> ignored
+    @game.handle_key("\e[D")
+    @game.tick
+    assert_equal :right, @game.direction
+
+    # Move :up, then try 'j' or Down Arrow (\e[B) -> ignored
     @game.handle_key("k")
     @game.tick
     assert_equal :up, @game.direction
-    @game.handle_key("j")
+    @game.handle_key("\e[B")
     @game.tick
     assert_equal :up, @game.direction
   end
 
   def test_prevents_rapid_double_key_reversal_in_single_tick
-    # Starting :right -> if user presses 'k' then 'h' before tick(),
-    # the snake shouldn't reverse into itself on the same tick!
     @game.handle_key("k")
     @game.handle_key("h")
     @game.tick
@@ -77,19 +106,14 @@ class TestSnakeTUI < Minitest::Test
     assert_equal :up, @game.direction
   end
 
-  def test_ignores_wasd_and_arrow_keys
-    ["w", "a", "s", "d", "\e[A", "\e[B", "\e[C", "\e[D"].each do |invalid_key|
+  def test_ignores_unrelated_keys
+    ["w", "a", "s", "d", "x", " "].each do |invalid_key|
       @game.handle_key(invalid_key)
     end
     assert_equal :right, @game.direction
   end
 
   def test_food_probability_distribution
-    # 0.0...0.23 -> :blue (🔵, 10)
-    # 0.23...0.46 -> :red (🔴, 10)
-    # 0.46...0.69 -> :yellow (🟡, 10)
-    # 0.69...0.92 -> :green (🟢, 10)
-    # 0.92..1.0 -> :purple (🟣, 50)
     blue = SnakeTUI::Food.from_roll([5, 5], 0.10)
     assert_equal :blue, blue.color
     assert_equal "🔵", blue.emoji
@@ -148,14 +172,12 @@ class TestSnakeTUI < Minitest::Test
   end
 
   def test_self_collision_triggers_game_over
-    # Grow snake so it can collide with itself
     5.times do
       hy, hx = @game.snake.first
       @game.force_food(SnakeTUI::Food.from_roll([hy, hx + 1], 0.10))
       @game.tick
     end
 
-    # Loop back into body: down -> left -> up
     @game.handle_key("j")
     @game.tick
     @game.handle_key("h")

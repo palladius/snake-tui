@@ -4,7 +4,7 @@ A colorful, nostalgic Nokia-inspired Terminal User Interface (TUI) Snake game wr
 
 ## ✨ Features
 
-- **Strict Vim Muscle-Memory Controls:** Move exclusively with `H` (Left), `J` (Down), `K` (Up), `L` (Right) — case-insensitive. Arrow keys and WASD are ignored!
+- **Dual Controls (Vim + Arrow Keys):** Move with `H` (Left), `J` (Down), `K` (Up), `L` (Right) OR standard Arrow keys (`←` `↓` `↑` `→`).
 - **Google-Colored Emoji Food:**
   - `🔵` Blue, `🔴` Red, `🟡` Yellow, `🟢` Green (23% each = 92% total) → **+10 points**
   - `🟣` Super Rare Purple ball (8% chance) → **+50 bonus points**

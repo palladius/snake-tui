@@ -51,7 +51,7 @@ parser = OptionParser.new do |opts|
     puts <<~RULES
 
       🐍 TUI Vim Snake Rules:
-        - Move strictly with Vim keys: H (Left), J (Down), K (Up), L (Right)
+        - Move with Vim keys: H (Left), J (Down), K (Up), L (Right) OR Arrow keys (← ↓ ↑ →)
         - Eat Google balls 🔵 🔴 🟡 🟢 (+10 pts, 92% spawn chance)
         - Eat Super Rare Purple balls 🟣 (+50 pts, 8% spawn chance)
         - Press R to restart on Game Over, Q to quit at any time.
@@ -101,10 +101,13 @@ begin
           break
         end
 
-        # Drain escape sequences (e.g. arrow keys) so they don't leak letters
+        # Read full escape sequence (e.g. \e[A, \e[B, \e[C, \e[D or \eOA..D) for arrow keys
         if ch == "\e"
-          while (extra = io.read_nonblock(1, exception: false)) && extra != :wait_readable
+          while IO.select([io], nil, nil, 0.005)
+            extra = io.read_nonblock(1, exception: false)
+            break if extra.nil? || extra == :wait_readable
             ch << extra
+            break if ch.length >= 3
           end
         end
 

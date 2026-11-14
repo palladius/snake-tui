@@ -32,7 +32,7 @@ module SnakeTUI
       lines << "#{BANNER_COLOR}#{title}#{RESET}"
       speed_ms = (game.tick_interval * 1000).round
       lines << "#{GOLD_COLOR}SCORE: #{format('%04d', game.score)}#{RESET}  |  HI: #{format('%04d', game.high_score)}  |  LEN: #{game.snake.length}  |  TICK: #{speed_ms}ms"
-      lines << "Controls: #{BOLD_GREEN}[H]#{RESET} Left  #{BOLD_GREEN}[J]#{RESET} Down  #{BOLD_GREEN}[K]#{RESET} Up  #{BOLD_GREEN}[L]#{RESET} Right  |  #{BOLD_GREEN}[Q]#{RESET} Quit"
+      lines << "Controls: #{BOLD_GREEN}[H/←]#{RESET} Left  #{BOLD_GREEN}[J/↓]#{RESET} Down  #{BOLD_GREEN}[K/↑]#{RESET} Up  #{BOLD_GREEN}[L/→]#{RESET} Right  |  #{BOLD_GREEN}[Q]#{RESET} Quit"
 
       # Top Wall
       lines << "#{WALL_COLOR}╔#{'═' * inner_char_width}╗#{RESET}"

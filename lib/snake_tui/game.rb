@@ -2,8 +2,8 @@
 
 =begin
 SnakeTUI::Game manages the core grid state, snake movement, Vim keybinding
-controls (H=left, J=down, K=up, L=right), food spawning, score calculation,
-speed scaling, and collision detection.
+controls (H=left, J=down, K=up, L=right) AND standard arrow keys (←/↓/↑/→),
+food spawning, score calculation, speed scaling, and collision detection.
 =end
 
 module SnakeTUI
@@ -27,6 +27,17 @@ module SnakeTUI
       "j" => :down,
       "k" => :up,
       "l" => :right
+    }.freeze
+
+    ARROW_KEYS = {
+      "\e[A" => :up,
+      "\e[B" => :down,
+      "\e[C" => :right,
+      "\e[D" => :left,
+      "\eOA" => :up,
+      "\eOB" => :down,
+      "\eOC" => :right,
+      "\eOD" => :left
     }.freeze
 
     BASE_TICK_INTERVAL = 0.14
@@ -77,7 +88,8 @@ module SnakeTUI
     def handle_key(raw_key)
       return if raw_key.nil?
 
-      key = raw_key.to_s.downcase
+      raw_str = raw_key.to_s
+      key = raw_str.downcase
       if key == "q"
         @quit_requested = true
         return
@@ -90,7 +102,7 @@ module SnakeTUI
 
       return if @game_over
 
-      desired = VIM_KEYS[key]
+      desired = ARROW_KEYS[raw_str] || VIM_KEYS[key]
       return unless desired
 
       # Prevent 180-degree reversal against the committed direction of the current tick
