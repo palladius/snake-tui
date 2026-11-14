@@ -1,6 +1,13 @@
 # SnakeTUI Justfile
 
-# Run the game interactively
+# Default recipe: play the game!
+default: play
+
+# Play TUI Vim Snake interactively
+play *ARGS:
+    ./bin/snake-tui {{ARGS}}
+
+# Alias for play
 run *ARGS:
     ./bin/snake-tui {{ARGS}}
 
