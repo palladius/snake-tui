@@ -64,7 +64,8 @@ module SnakeTUI
               row << "#{BODY_GREEN}▓▓#{RESET}"
             end
           elsif food_pos == pos
-            row << (@no_emoji ? game.food.ascii : game.food.emoji)
+            next_col = 2 + (x + 1) * 2
+            row << (@no_emoji ? game.food.ascii : "#{game.food.emoji} \e[#{next_col}G")
           else
             row << "  "
           end

@@ -88,9 +88,9 @@ def handle_websocket(client, query_string)
   end
 
   cmd = File.join(ROOT, "bin", "snake-tui")
-  PTY.spawn({ "TERM" => "xterm-256color" }, "ruby", cmd, diff_flag, "-W", "28", "-H", "18") do |pty_out, pty_in, pid|
+  PTY.spawn({ "TERM" => "xterm-256color" }, "ruby", cmd, diff_flag, "-W", "36", "-H", "18") do |pty_out, pty_in, pid|
     begin
-      pty_in.winsize = [26, 62] if pty_in.respond_to?(:winsize=)
+      pty_in.winsize = [25, 84] if pty_in.respond_to?(:winsize=)
     rescue StandardError
       nil
     end

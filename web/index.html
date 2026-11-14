@@ -94,12 +94,13 @@
       background: #050811;
       border: 2px solid #334155;
       border-radius: 12px;
-      padding: 12px;
+      padding: 14px 18px;
       box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), inset 0 0 24px rgba(34, 197, 94, 0.06);
+      overflow: hidden;
     }
-    #terminal {
-      width: 660px;
-      height: 460px;
+    /* Hide xterm scrollbar completely for pure arcade cabinet feel */
+    .xterm-viewport {
+      overflow-y: hidden !important;
     }
     .controls-row {
       display: flex;
@@ -174,16 +175,19 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.min.js"></script>
   <script type="module">
     const statusEl = document.getElementById("bridge-status");
     const btnWasm  = document.getElementById("btn-mode-wasm");
     const btnPty   = document.getElementById("btn-mode-pty");
 
     const term = new window.Terminal({
-      cols: 62,
+      cols: 84,
       rows: 25,
+      scrollback: 0,
       cursorBlink: false,
       convertEol: true,
+      allowProposedApi: true,
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Mono', monospace",
       fontSize: 15,
       theme: {
@@ -191,6 +195,13 @@
         foreground: "#f8fafc"
       }
     });
+
+    if (window.Unicode11Addon) {
+      const unicode11Addon = new window.Unicode11Addon.Unicode11Addon();
+      term.loadAddon(unicode11Addon);
+      term.unicode.activeVersion = "11";
+    }
+
     term.open(document.getElementById("terminal"));
     term.write("\x1b[?25l"); // Hide cursor
 
@@ -252,7 +263,7 @@
 
         const vm = cachedRubyVM;
         vm.eval(`
-          $web_game = SnakeTUI::Game.new(width: 24, height: 18, difficulty: :medium, countdown: 2)
+          $web_game = SnakeTUI::Game.new(width: 36, height: 18, difficulty: :medium, countdown: 2)
           $web_renderer = SnakeTUI::Renderer.new(no_emoji: false)
         `);
 
@@ -291,7 +302,6 @@
 
         activeSendKey = (rawKey) => {
           if (stopped) return;
-          // Pass key safely into Ruby VM
           const escaped = JSON.stringify(rawKey);
           const action = vm.eval(`$web_game.handle_key(${escaped}).to_s`).toString();
           if (action === "restart") {
@@ -382,7 +392,6 @@
     btnWasm.addEventListener("click", () => startWasmBridge());
     btnPty.addEventListener("click", () => startPtyBridge(false));
 
-    // Auto-select mode: if ?mode=wasm is set, use Static WASM; otherwise try local PTY first and auto-fallback to Static WASM!
     const params = new URLSearchParams(location.search);
     if (params.get("mode") === "wasm") {
       startWasmBridge();
