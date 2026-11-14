@@ -3,7 +3,9 @@
 =begin
 SnakeTUI::Game manages the core grid state, snake movement, Vim keybinding
 controls (H=left, J=down, K=up, L=right) AND standard arrow keys (←/↓/↑/→),
-food spawning, score calculation, speed scaling, and collision detection.
+buffered direction queue (for crisp 1-cell turns), start/restart countdown,
+difficulty levels (:easy, :medium, :hard), food spawning, score calculation,
+speed scaling, and collision detection.
 =end
 
 module SnakeTUI
@@ -40,15 +42,32 @@ module SnakeTUI
       "\eOD" => :left
     }.freeze
 
-    BASE_TICK_INTERVAL = 0.14
-    MIN_TICK_INTERVAL  = 0.045
-    SPEED_STEP         = 0.004
+    DIFFICULTIES = {
+      easy:   { base_tick: 0.20,  min_tick: 0.09,  speed_step: 0.002, label: "EASY 🟢" },
+      medium: { base_tick: 0.14,  min_tick: 0.05,  speed_step: 0.004, label: "MEDIUM 🟡" },
+      hard:   { base_tick: 0.085, min_tick: 0.03,  speed_step: 0.005, label: "HARD 🔴" }
+    }.freeze
 
-    attr_reader :width, :height, :snake, :direction, :food, :score, :high_score, :death_reason, :foods_eaten
+    DIFFICULTY_KEYS = {
+      "1" => :easy,
+      "2" => :medium,
+      "3" => :hard
+    }.freeze
 
-    def initialize(width: 24, height: 18, rng: Random.new)
+    BASE_TICK_INTERVAL = DIFFICULTIES[:medium][:base_tick]
+    MIN_TICK_INTERVAL  = DIFFICULTIES[:medium][:min_tick]
+    SPEED_STEP         = DIFFICULTIES[:medium][:speed_step]
+    MAX_DIRECTION_QUEUE = 2
+
+    attr_reader :width, :height, :snake, :direction, :direction_queue,
+                :food, :score, :high_score, :death_reason, :foods_eaten,
+                :difficulty, :countdown
+
+    def initialize(width: 24, height: 18, difficulty: :medium, countdown: 0, rng: Random.new)
       @width = width
       @height = height
+      @difficulty = DIFFICULTIES.key?(difficulty) ? difficulty : :medium
+      @initial_countdown = countdown.to_i.clamp(0, 5)
       @rng = rng
       @high_score = 0
       @quit_requested = false
@@ -64,12 +83,25 @@ module SnakeTUI
         [mid_y, mid_x - 2]
       ]
       @direction = :right
-      @next_direction = :right
+      @direction_queue = []
       @score = 0
       @foods_eaten = 0
       @game_over = false
       @death_reason = nil
+      @countdown = @initial_countdown
       spawn_food!
+    end
+
+    def difficulty=(new_diff)
+      @difficulty = new_diff if DIFFICULTIES.key?(new_diff)
+    end
+
+    def countdown?
+      @countdown > 0
+    end
+
+    def decrement_countdown!
+      @countdown -= 1 if @countdown > 0
     end
 
     def game_over?
@@ -81,40 +113,52 @@ module SnakeTUI
     end
 
     def tick_interval
-      interval = BASE_TICK_INTERVAL - (@foods_eaten * SPEED_STEP)
-      [interval, MIN_TICK_INTERVAL].max
+      cfg = DIFFICULTIES[@difficulty] || DIFFICULTIES[:medium]
+      interval = cfg[:base_tick] - (@foods_eaten * cfg[:speed_step])
+      [interval, cfg[:min_tick]].max
     end
 
+    # Returns :turned if a new perpendicular direction was queued on an empty queue,
+    # allowing the interactive loop to react immediately without multi-cell lag.
     def handle_key(raw_key)
-      return if raw_key.nil?
+      return nil if raw_key.nil?
 
       raw_str = raw_key.to_s
       key = raw_str.downcase
       if key == "q"
         @quit_requested = true
-        return
+        return :quit
+      end
+
+      if DIFFICULTY_KEYS.key?(key)
+        @difficulty = DIFFICULTY_KEYS[key]
+        return :difficulty
       end
 
       if key == "r" && @game_over
         reset!
-        return
+        return :restart
       end
 
-      return if @game_over
+      return nil if @game_over
 
       desired = ARROW_KEYS[raw_str] || VIM_KEYS[key]
-      return unless desired
+      return nil unless desired
 
-      # Prevent 180-degree reversal against the committed direction of the current tick
-      unless OPPOSITES[@direction] == desired
-        @next_direction = desired
-      end
+      reference_dir = @direction_queue.last || @direction
+      return nil if desired == reference_dir
+      return nil if OPPOSITES[reference_dir] == desired
+      return nil if @direction_queue.size >= MAX_DIRECTION_QUEUE
+
+      was_empty = @direction_queue.empty?
+      @direction_queue << desired
+      was_empty ? :turned : :queued
     end
 
     def tick
-      return if @game_over || @quit_requested
+      return if @game_over || @quit_requested || countdown?
 
-      @direction = @next_direction
+      @direction = @direction_queue.shift unless @direction_queue.empty?
       dy, dx = VECTORS[@direction]
       head_y, head_x = @snake.first
       new_head = [head_y + dy, head_x + dx]
@@ -145,6 +189,11 @@ module SnakeTUI
 
     def force_food(food_obj)
       @food = food_obj
+    end
+
+    def resize!(new_width, new_height)
+      @width = new_width.clamp(8, 150)
+      @height = new_height.clamp(8, 100)
     end
 
     private

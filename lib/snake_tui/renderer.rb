@@ -3,7 +3,8 @@
 =begin
 SnakeTUI::Renderer draws the colorful Nokia-inspired Snake TUI frame using ANSI
 escape sequences, double-width grid cells (so 🔵🔴🟡🟢🟣 emojis align cleanly
-with the `██` snake blocks), and an optional `--no-emoji` mode for legacy terminals.
+with the `██` snake blocks), difficulty indicator, start countdown banner,
+and an optional `--no-emoji` mode for legacy terminals.
 =end
 
 module SnakeTUI
@@ -31,8 +32,9 @@ module SnakeTUI
       title = @no_emoji ? "=== TUI VIM SNAKE [ASCII] ===" : "🐍 TUI VIM SNAKE 🔵🔴🟡🟢🟣"
       lines << "#{BANNER_COLOR}#{title}#{RESET}"
       speed_ms = (game.tick_interval * 1000).round
-      lines << "#{GOLD_COLOR}SCORE: #{format('%04d', game.score)}#{RESET}  |  HI: #{format('%04d', game.high_score)}  |  LEN: #{game.snake.length}  |  TICK: #{speed_ms}ms"
-      lines << "Controls: #{BOLD_GREEN}[H/←]#{RESET} Left  #{BOLD_GREEN}[J/↓]#{RESET} Down  #{BOLD_GREEN}[K/↑]#{RESET} Up  #{BOLD_GREEN}[L/→]#{RESET} Right  |  #{BOLD_GREEN}[Q]#{RESET} Quit"
+      diff_str = game.difficulty.to_s.upcase
+      lines << "#{GOLD_COLOR}SCORE: #{format('%04d', game.score)}#{RESET}  |  HI: #{format('%04d', game.high_score)}  |  LEN: #{game.snake.length}  |  DIFF: #{diff_str}  |  TICK: #{speed_ms}ms"
+      lines << "Controls: #{BOLD_GREEN}[H/←]#{RESET} Left #{BOLD_GREEN}[J/↓]#{RESET} Down #{BOLD_GREEN}[K/↑]#{RESET} Up #{BOLD_GREEN}[L/→]#{RESET} Right | #{BOLD_GREEN}[1/2/3]#{RESET} Easy/Med/Hard | #{BOLD_GREEN}[Q]#{RESET} Quit"
 
       # Top Wall
       lines << "#{WALL_COLOR}╔#{'═' * inner_char_width}╗#{RESET}"
@@ -40,8 +42,18 @@ module SnakeTUI
       snake_set = {}
       game.snake.each_with_index { |pos, idx| snake_set[pos] ||= idx }
       food_pos = game.food&.position
+      countdown_row = game.countdown? ? [game.height / 2 - 2, 1].max : nil
 
       (0...game.height).each do |y|
+        if y == countdown_row
+          msg = " READY? #{game.countdown}... "
+          pad_total = [inner_char_width - msg.length, 0].max
+          left_pad = pad_total / 2
+          right_pad = pad_total - left_pad
+          lines << "#{WALL_COLOR}║#{RESET}#{' ' * left_pad}#{GOLD_COLOR}#{msg}#{RESET}#{' ' * right_pad}#{WALL_COLOR}║#{RESET}"
+          next
+        end
+
         row = +"#{WALL_COLOR}║#{RESET}"
         (0...game.width).each do |x|
           pos = [y, x]
@@ -72,7 +84,9 @@ module SnakeTUI
                      when :victory then "BOARD CLEARED — YOU WIN!"
                      else "GAME OVER!"
                      end
-        lines << "#{ALERT_COLOR}#{bump} #{reason_str} Final Score: #{game.score} — Press [R] to Restart or [Q] to Quit#{RESET}"
+        lines << "#{ALERT_COLOR}#{bump} #{reason_str} Final Score: #{game.score} — Press [R] to Restart, [1/2/3] Difficulty, or [Q] to Quit#{RESET}"
+      elsif game.countdown?
+        lines << "#{GOLD_COLOR}⏳ Starting in #{game.countdown}... Choose your initial direction with Arrow keys or HJKL!#{RESET}"
       elsif @no_emoji
         lines << "#{PURPLE_COLOR}Tip:#{RESET} Google balls (●) = +10 pts | Rare Purple (★) = +50 pts"
       else

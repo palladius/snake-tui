@@ -2,9 +2,11 @@
 
 =begin
 Test suite for SnakeTUI (TUI Vim Snake).
-Verifies all acceptance criteria from SPEC.md + arrow key support:
+Verifies all acceptance criteria from SPEC.md + arrow key support + v0.2 usability:
 - Vim keybindings (h/j/k/l, case-insensitive) AND standard arrow keys (Up/Down/Left/Right)
-- 180-degree reversal prevention
+- 180-degree reversal prevention and 2-step buffered direction queue (1-cell turns)
+- Start/restart countdown (2 -> 1 -> 0)
+- Difficulty levels (:easy, :medium, :hard) via constructor and keys 1/2/3
 - Food spawning distribution (🔵, 🔴, 🟡, 🟢 23% each = 92%, 🟣 8%) and non-collision with snake body
 - Scoring (+10 standard Google ball, +50 rare purple ball) and snake growth
 - Dynamic tick speed acceleration as the snake grows
@@ -26,6 +28,8 @@ class TestSnakeTUI < Minitest::Test
     assert_equal 20, @game.width
     assert_equal 15, @game.height
     assert_equal 0, @game.score
+    assert_equal :medium, @game.difficulty
+    assert_equal 0, @game.countdown
     refute @game.game_over?
     assert_equal :right, @game.direction
     assert_equal 3, @game.snake.length
@@ -52,7 +56,6 @@ class TestSnakeTUI < Minitest::Test
   end
 
   def test_arrow_keybindings_csi_and_ss3
-    # Starting :right -> Up (\e[A), Left (\e[D), Down (\e[B), Right (\e[C)
     @game.handle_key("\e[A")
     @game.tick
     assert_equal :up, @game.direction
@@ -69,7 +72,6 @@ class TestSnakeTUI < Minitest::Test
     @game.tick
     assert_equal :right, @game.direction
 
-    # Also test SS3 application-mode sequences (\eOA, \eOD, \eOB, \eOC)
     @game.handle_key("\eOA")
     @game.tick
     assert_equal :up, @game.direction
@@ -80,7 +82,6 @@ class TestSnakeTUI < Minitest::Test
   end
 
   def test_prevents_180_degree_reversal
-    # Starting :right -> pressing 'h' or Left Arrow (\e[D) must be ignored
     @game.handle_key("h")
     @game.tick
     assert_equal :right, @game.direction
@@ -89,7 +90,6 @@ class TestSnakeTUI < Minitest::Test
     @game.tick
     assert_equal :right, @game.direction
 
-    # Move :up, then try 'j' or Down Arrow (\e[B) -> ignored
     @game.handle_key("k")
     @game.tick
     assert_equal :up, @game.direction
@@ -98,12 +98,56 @@ class TestSnakeTUI < Minitest::Test
     assert_equal :up, @game.direction
   end
 
-  def test_prevents_rapid_double_key_reversal_in_single_tick
-    @game.handle_key("k")
-    @game.handle_key("h")
+  def test_rapid_double_key_queues_clean_one_cell_turn
+    # Pressing 'k' (Up) then 'h' (Left) within a single tick must:
+    # 1) NOT cause self-collision
+    # 2) Move :up on tick 1 (1 cell)
+    # 3) Move :left on tick 2 (1 cell)
+    assert_equal :turned, @game.handle_key("k")
+    assert_equal :queued, @game.handle_key("h")
+
     @game.tick
     refute @game.game_over?
     assert_equal :up, @game.direction
+
+    @game.tick
+    refute @game.game_over?
+    assert_equal :left, @game.direction
+  end
+
+  def test_countdown_blocks_movement_until_zero
+    game_cd = SnakeTUI::Game.new(width: 20, height: 15, countdown: 2, rng: @rng)
+    initial_head = game_cd.snake.first.dup
+    assert game_cd.countdown?
+    assert_equal 2, game_cd.countdown
+
+    # Tick does not move snake while countdown > 0
+    game_cd.tick
+    assert_equal initial_head, game_cd.snake.first
+
+    game_cd.decrement_countdown!
+    assert_equal 1, game_cd.countdown
+    game_cd.decrement_countdown!
+    refute game_cd.countdown?
+
+    game_cd.tick
+    refute_equal initial_head, game_cd.snake.first
+  end
+
+  def test_difficulty_levels_and_hotkeys
+    easy_game = SnakeTUI::Game.new(difficulty: :easy)
+    med_game  = SnakeTUI::Game.new(difficulty: :medium)
+    hard_game = SnakeTUI::Game.new(difficulty: :hard)
+
+    assert_operator easy_game.tick_interval, :>, med_game.tick_interval
+    assert_operator med_game.tick_interval, :>, hard_game.tick_interval
+
+    @game.handle_key("1")
+    assert_equal :easy, @game.difficulty
+    @game.handle_key("3")
+    assert_equal :hard, @game.difficulty
+    @game.handle_key("2")
+    assert_equal :medium, @game.difficulty
   end
 
   def test_ignores_unrelated_keys
@@ -209,6 +253,7 @@ class TestSnakeTUI < Minitest::Test
     frame_emoji = renderer_emoji.render_to_string(@game)
     assert_includes frame_emoji, @game.food.emoji
     assert_includes frame_emoji, "SCORE:"
+    assert_includes frame_emoji, "DIFF: MEDIUM"
 
     renderer_ascii = SnakeTUI::Renderer.new(no_emoji: true)
     frame_ascii = renderer_ascii.render_to_string(@game)

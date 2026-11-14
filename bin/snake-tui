@@ -3,21 +3,46 @@
 =begin
 CLI entry point for TUI Vim Snake (`snake-tui`).
 Supports:
-  -h, --help        Show usage and rules
-  -n, --dryrun      Render a single static preview frame and exit safely
-      --no-emoji    Use colored ASCII fallback instead of 🔵🔴🟡🟢🟣 emojis
-  -W, --width COLS  Set board width in cells (default: 24)
-  -H, --height ROWS Set board height in cells (default: 18)
-  -v, --version     Print version
+  -h, --help              Show usage and rules
+  -n, --dryrun            Render a single static preview frame and exit safely
+      --no-emoji          Use colored ASCII fallback instead of 🔵🔴🟡🟢🟣 emojis
+      --easy              Start in Easy mode (200ms tick, gentle acceleration)
+      --medium            Start in Medium mode (140ms tick, default)
+      --hard              Start in Hard mode (85ms tick, fast acceleration)
+  -d, --difficulty LEVEL  Set difficulty (easy, medium, hard)
+  -f, --fullscreen        Auto-fit board to terminal size minus HUD lines (default)
+  -W, --width COLS        Set explicit board width in cells
+  -H, --height ROWS       Set explicit board height in cells
+  -v, --version           Print version
 =end
 
 require "optparse"
 require "io/console"
 require_relative "../lib/snake_tui"
 
+def detect_board_dimensions
+  if IO.respond_to?(:console) && IO.console
+    rows, cols = IO.console.winsize
+    if rows.to_i > 0 && cols.to_i > 0
+      # 3 header lines + 1 top wall + 1 bottom wall + 1 footer line = 6 HUD lines
+      # 1 left wall + 1 right wall = 2 border columns; each cell is 2 chars wide
+      h = (rows - 6).clamp(8, 100)
+      w = ((cols - 2) / 2).clamp(8, 150)
+      return [w, h]
+    end
+  end
+  [24, 18]
+rescue StandardError
+  [24, 18]
+end
+
+auto_w, auto_h = detect_board_dimensions
+
 options = {
-  width: 24,
-  height: 18,
+  width: auto_w,
+  height: auto_h,
+  explicit_size: false,
+  difficulty: :medium,
   no_emoji: false,
   dryrun: false
 }
@@ -25,12 +50,38 @@ options = {
 parser = OptionParser.new do |opts|
   opts.banner = "Usage: snake-tui [options]"
 
-  opts.on("-W", "--width COLS", Integer, "Board width in cells (default: 24)") do |w|
-    options[:width] = w.clamp(8, 60)
+  opts.on("--easy", "Easy difficulty (slower speed, ideal for kids)") do
+    options[:difficulty] = :easy
   end
 
-  opts.on("-H", "--height ROWS", Integer, "Board height in cells (default: 18)") do |h|
-    options[:height] = h.clamp(8, 40)
+  opts.on("--medium", "Medium difficulty (default balanced speed)") do
+    options[:difficulty] = :medium
+  end
+
+  opts.on("--hard", "Hard difficulty (fast speed for pros)") do
+    options[:difficulty] = :hard
+  end
+
+  opts.on("-d", "--difficulty LEVEL", String, "Difficulty: easy, medium, hard") do |lvl|
+    sym = lvl.strip.downcase.to_sym
+    options[:difficulty] = sym if SnakeTUI::Game::DIFFICULTIES.key?(sym)
+  end
+
+  opts.on("-f", "--fullscreen", "Fill terminal dimensions minus HUD lines (default)") do
+    w, h = detect_board_dimensions
+    options[:width] = w
+    options[:height] = h
+    options[:explicit_size] = false
+  end
+
+  opts.on("-W", "--width COLS", Integer, "Board width in cells (default: auto terminal width)") do |w|
+    options[:width] = w.clamp(8, 150)
+    options[:explicit_size] = true
+  end
+
+  opts.on("-H", "--height ROWS", Integer, "Board height in cells (default: auto terminal height)") do |h|
+    options[:height] = h.clamp(8, 100)
+    options[:explicit_size] = true
   end
 
   opts.on("--no-emoji", "Fallback to colored ASCII glyphs for older terminals") do
@@ -52,6 +103,7 @@ parser = OptionParser.new do |opts|
 
       🐍 TUI Vim Snake Rules:
         - Move with Vim keys: H (Left), J (Down), K (Up), L (Right) OR Arrow keys (← ↓ ↑ →)
+        - Difficulty: --easy (or key 1), --medium (or key 2), --hard (or key 3)
         - Eat Google balls 🔵 🔴 🟡 🟢 (+10 pts, 92% spawn chance)
         - Eat Super Rare Purple balls 🟣 (+50 pts, 8% spawn chance)
         - Press R to restart on Game Over, Q to quit at any time.
@@ -62,13 +114,21 @@ end
 
 parser.parse!
 
-game = SnakeTUI::Game.new(width: options[:width], height: options[:height])
+game = SnakeTUI::Game.new(
+  width: options[:width],
+  height: options[:height],
+  difficulty: options[:difficulty],
+  countdown: options[:dryrun] ? 0 : 2
+)
 renderer = SnakeTUI::Renderer.new(no_emoji: options[:no_emoji])
 
 if options[:dryrun]
   puts renderer.render_to_string(game)
   exit 0
 end
+
+COUNTDOWN_STEP_SECONDS = 0.65
+MIN_TURN_STEP_SECONDS  = 0.035
 
 # Interactive raw TUI loop
 begin
@@ -78,15 +138,16 @@ begin
   STDIN.raw do |io|
     until game.quit_requested?
       tick_start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      step_duration = game.countdown? ? COUNTDOWN_STEP_SECONDS : game.tick_interval
 
       print "\e[H"
       print renderer.render_to_string(game)
       $stdout.flush
 
-      # Poll non-blocking input until next tick is due
+      # Poll non-blocking input until next tick or countdown step is due
       loop do
         elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - tick_start
-        remaining = game.tick_interval - elapsed
+        remaining = step_duration - elapsed
         break if remaining <= 0
 
         ready = IO.select([io], nil, nil, remaining)
@@ -101,21 +162,31 @@ begin
           break
         end
 
-        # Read full escape sequence (e.g. \e[A, \e[B, \e[C, \e[D or \eOA..D) for arrow keys
+        # Read a single complete escape sequence (e.g. \e[A..D or \eOA..D)
         if ch == "\e"
-          while IO.select([io], nil, nil, 0.005)
+          while ch.length < 3 && IO.select([io], nil, nil, 0.002)
             extra = io.read_nonblock(1, exception: false)
             break if extra.nil? || extra == :wait_readable
             ch << extra
-            break if ch.length >= 3
           end
         end
 
-        game.handle_key(ch)
-        break if game.quit_requested?
+        action = game.handle_key(ch)
+        break if game.quit_requested? || action == :restart
+
+        # Instant 1-cell responsiveness: if a fresh perpendicular turn was pressed
+        # during active play and at least 35ms have passed, advance immediately!
+        if !game.countdown? && action == :turned
+          now_elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - tick_start
+          break if now_elapsed >= MIN_TURN_STEP_SECONDS
+        end
       end
 
-      game.tick
+      if game.countdown?
+        game.decrement_countdown!
+      else
+        game.tick
+      end
     end
   end
 ensure
