@@ -1,6 +1,6 @@
 # 🐍 TUI Vim Snake (`snake-tui`)
 
-[![Deploy to GitHub Pages](https://github.com/palladius/snake-tui/actions/workflows/deploy.yml/badge.svg)](https://github.com/palladius/snake-tui/actions/workflows/deploy.yml)
+[![Deploy to GitHub Pages](https://github.com/palladius/snake-tui/actions/workflows/pages.yml/badge.svg)](https://github.com/palladius/snake-tui/actions/workflows/pages.yml)
 
 🌐 **Play Live in Browser (CRuby 3.3 WebAssembly + xterm.js):** **[https://palladius.github.io/snake-tui/](https://palladius.github.io/snake-tui/)**
 
