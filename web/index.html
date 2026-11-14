@@ -249,10 +249,17 @@
           const { vm } = await DefaultRubyVM(wasmModule);
 
           // Fetch the EXACT original Ruby source files from our repository!
+          const fetchRb = async (file) => {
+            for (const prefix of ["lib/snake_tui/", "../lib/snake_tui/"]) {
+              const resp = await fetch(prefix + file);
+              if (resp.ok) return resp.text();
+            }
+            throw new Error("Could not fetch " + file);
+          };
           const [foodRb, gameRb, rendererRb] = await Promise.all([
-            fetch("../lib/snake_tui/food.rb").then((r) => r.text()),
-            fetch("../lib/snake_tui/game.rb").then((r) => r.text()),
-            fetch("../lib/snake_tui/renderer.rb").then((r) => r.text())
+            fetchRb("food.rb"),
+            fetchRb("game.rb"),
+            fetchRb("renderer.rb")
           ]);
 
           vm.eval(foodRb);
@@ -393,7 +400,8 @@
     btnPty.addEventListener("click", () => startPtyBridge(false));
 
     const params = new URLSearchParams(location.search);
-    if (params.get("mode") === "wasm") {
+    const isStaticHost = location.hostname.endsWith("github.io");
+    if (params.get("mode") === "wasm" || (isStaticHost && params.get("mode") !== "pty")) {
       startWasmBridge();
     } else if (params.get("mode") === "pty") {
       startPtyBridge(false);
