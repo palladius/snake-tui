@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🐍 TUI Vim Snake — Web Pseudo-Terminal Bridge</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+  <style>
+    :root {
+      --bg: #070b14;
+      --panel: #0f172a;
+      --border: #1e293b;
+      --accent: #22c55e;
+      --gold: #facc15;
+      --cyan: #38bdf8;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #0f1f38 0%, var(--bg) 70%);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+      gap: 12px;
+    }
+    header {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 16px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 1.05rem;
+    }
+    .badge {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.14);
+      border: 1px solid var(--cyan);
+      color: var(--cyan);
+    }
+    .badge.ok {
+      background: rgba(34, 197, 94, 0.14);
+      border-color: var(--accent);
+      color: #4ade80;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    button {
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 6px 11px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+    button:hover {
+      border-color: var(--cyan);
+      transform: translateY(-1px);
+    }
+    button.active {
+      background: rgba(34, 197, 94, 0.2);
+      border-color: var(--accent);
+      color: #4ade80;
+    }
+    #terminal-frame {
+      background: #050811;
+      border: 2px solid #334155;
+      border-radius: 12px;
+      padding: 12px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), inset 0 0 24px rgba(34, 197, 94, 0.06);
+    }
+    #terminal {
+      width: 660px;
+      height: 460px;
+    }
+    .controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: center;
+    }
+    .dpad {
+      display: inline-flex;
+      gap: 6px;
+    }
+    .dpad button {
+      font-size: 0.95rem;
+      padding: 8px 14px;
+    }
+    .architecture-card {
+      width: 100%;
+      max-width: 960px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 0.84rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .architecture-card strong { color: var(--text); }
+    .architecture-card code {
+      background: #090d16;
+      color: var(--gold);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span>🐍 TUI Vim Snake — Web Terminal</span>
+      <span id="bridge-status" class="badge">Booting Bridge…</span>
+    </div>
+    <div class="toolbar">
+      <button id="btn-mode-wasm" type="button" title="Run untouched lib/snake_tui/*.rb in browser via CRuby 3.3 WebAssembly">💎 Static Ruby WASM</button>
+      <button id="btn-mode-pty" type="button" title="Connect via WebSocket to real ./bin/snake-tui Linux PTY">🔌 Local PTY WebSocket</button>
+      <span style="color:#475569">|</span>
+      <button data-key="1" type="button">1: Easy 🟢</button>
+      <button data-key="2" type="button">2: Med 🟡</button>
+      <button data-key="3" type="button">3: Hard 🔴</button>
+      <button data-key="r" type="button">↻ Restart [R]</button>
+    </div>
+  </header>
+
+  <div id="terminal-frame">
+    <div id="terminal"></div>
+  </div>
+
+  <div class="controls-row">
+    <div class="dpad">
+      <button data-key="h" type="button">← Left [H]</button>
+      <button data-key="j" type="button">↓ Down [J]</button>
+      <button data-key="k" type="button">↑ Up [K]</button>
+      <button data-key="l" type="button">→ Right [L]</button>
+    </div>
+  </div>
+
+  <div class="architecture-card">
+    <strong>Come funziona il Bridge TUI → Web (senza riscrivere il gioco):</strong><br/>
+    1️⃣ <strong>Modalità Static Ruby WASM (100% Client-Side / GitHub Pages)</strong>: Il browser carica <code>@xterm/xterm</code> (emulatore ANSI) + <code>@ruby/3.3-wasm-wasi</code> (CRuby 3.3 compilato in WebAssembly), scarica con <code>fetch()</code> i file originali <code>lib/snake_tui/food.rb</code>, <code>game.rb</code> e <code>renderer.rb</code>, e chiama <code>renderer.render_to_string(game)</code> iniettando le sequenze ANSI direttamente nel terminale web.<br/>
+    2️⃣ <strong>Modalità PTY WebSocket (<code>./bin/snake-tui-web</code>)</strong>: Un micro-server Ruby di 90 righe usa <code>PTY.spawn("./bin/snake-tui")</code> per creare uno pseudo-terminale Linux reale e trasmette i byte ANSI via WebSocket a <code>xterm.js</code>.
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script type="module">
+    const statusEl = document.getElementById("bridge-status");
+    const btnWasm  = document.getElementById("btn-mode-wasm");
+    const btnPty   = document.getElementById("btn-mode-pty");
+
+    const term = new window.Terminal({
+      cols: 62,
+      rows: 25,
+      cursorBlink: false,
+      convertEol: true,
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Mono', monospace",
+      fontSize: 15,
+      theme: {
+        background: "#050811",
+        foreground: "#f8fafc"
+      }
+    });
+    term.open(document.getElementById("terminal"));
+    term.write("\x1b[?25l"); // Hide cursor
+
+    let activeSendKey = null;
+    let cleanupCurrentMode = null;
+
+    function sendKey(k) {
+      if (activeSendKey) activeSendKey(k);
+      term.focus();
+    }
+
+    term.onData((data) => {
+      if (activeSendKey) activeSendKey(data);
+    });
+
+    document.querySelectorAll("button[data-key]").forEach((btn) => {
+      btn.addEventListener("click", () => sendKey(btn.getAttribute("data-key")));
+    });
+
+    // =========================================================================
+    // MODE 1: 100% STATIC IN-BROWSER RUBY 3.3 WASM BRIDGE
+    // Loads the exact unmodified Ruby files from ../lib/snake_tui/*.rb
+    // =========================================================================
+    let cachedRubyVM = null;
+
+    async function startWasmBridge() {
+      if (cleanupCurrentMode) cleanupCurrentMode();
+      btnWasm.classList.add("active");
+      btnPty.classList.remove("active");
+      statusEl.className = "badge";
+      statusEl.textContent = "Loading CRuby 3.3 WASM + lib/snake_tui/*.rb…";
+
+      term.clear();
+      term.writeln("\x1b[1;36m💎 Initializing CRuby 3.3 WebAssembly VM in browser...\x1b[0m");
+
+      try {
+        if (!cachedRubyVM) {
+          const { DefaultRubyVM } = await import(
+            "https://cdn.jsdelivr.net/npm/@ruby/wasm-wasi@2.7.0/dist/browser/+esm"
+          );
+          const wasmResp = await fetch(
+            "https://cdn.jsdelivr.net/npm/@ruby/3.3-wasm-wasi@2.7.0/dist/ruby+stdlib.wasm"
+          );
+          const wasmModule = await WebAssembly.compileStreaming(wasmResp);
+          const { vm } = await DefaultRubyVM(wasmModule);
+
+          // Fetch the EXACT original Ruby source files from our repository!
+          const [foodRb, gameRb, rendererRb] = await Promise.all([
+            fetch("../lib/snake_tui/food.rb").then((r) => r.text()),
+            fetch("../lib/snake_tui/game.rb").then((r) => r.text()),
+            fetch("../lib/snake_tui/renderer.rb").then((r) => r.text())
+          ]);
+
+          vm.eval(foodRb);
+          vm.eval(gameRb);
+          vm.eval(rendererRb);
+          cachedRubyVM = vm;
+        }
+
+        const vm = cachedRubyVM;
+        vm.eval(`
+          $web_game = SnakeTUI::Game.new(width: 24, height: 18, difficulty: :medium, countdown: 2)
+          $web_renderer = SnakeTUI::Renderer.new(no_emoji: false)
+        `);
+
+        statusEl.className = "badge ok";
+        statusEl.textContent = "💎 Running Real Ruby 3.3 (WASM Static Bridge)";
+
+        let stopped = false;
+        let timerId = null;
+        let lastStepStart = performance.now();
+
+        function renderFrame() {
+          if (stopped) return;
+          const ansiFrame = vm.eval("$web_renderer.render_to_string($web_game)").toString();
+          term.write("\x1b[H" + ansiFrame);
+        }
+
+        function scheduleNextStep() {
+          if (stopped) return;
+          lastStepStart = performance.now();
+          const inCountdown = vm.eval("$web_game.countdown?").toString() === "true";
+          const delayMs = inCountdown
+            ? 650
+            : Math.round(parseFloat(vm.eval("$web_game.tick_interval").toString()) * 1000);
+
+          timerId = setTimeout(() => {
+            if (stopped) return;
+            if (inCountdown) {
+              vm.eval("$web_game.decrement_countdown!");
+            } else {
+              vm.eval("$web_game.tick");
+            }
+            renderFrame();
+            scheduleNextStep();
+          }, delayMs);
+        }
+
+        activeSendKey = (rawKey) => {
+          if (stopped) return;
+          // Pass key safely into Ruby VM
+          const escaped = JSON.stringify(rawKey);
+          const action = vm.eval(`$web_game.handle_key(${escaped}).to_s`).toString();
+          if (action === "restart") {
+            clearTimeout(timerId);
+            renderFrame();
+            scheduleNextStep();
+          } else if (action === "turned") {
+            const inCountdown = vm.eval("$web_game.countdown?").toString() === "true";
+            if (!inCountdown && performance.now() - lastStepStart >= 35) {
+              clearTimeout(timerId);
+              vm.eval("$web_game.tick");
+              renderFrame();
+              scheduleNextStep();
+            }
+          } else {
+            renderFrame();
+          }
+        };
+
+        cleanupCurrentMode = () => {
+          stopped = true;
+          clearTimeout(timerId);
+        };
+
+        term.write("\x1b[2J\x1b[?25l");
+        renderFrame();
+        scheduleNextStep();
+        term.focus();
+      } catch (err) {
+        statusEl.className = "badge";
+        statusEl.textContent = "⚠️ WASM load failed (" + err.message + ")";
+        term.writeln("\x1b[1;31mError loading Ruby WASM: " + err.message + "\x1b[0m");
+      }
+    }
+
+    // =========================================================================
+    // MODE 2: LOCAL RUBY PTY WEBSOCKET BRIDGE (./bin/snake-tui-web)
+    // Connects to ws://host/ws which runs PTY.spawn("./bin/snake-tui")
+    // =========================================================================
+    function startPtyBridge(fallbackToWasmOnError = false) {
+      if (cleanupCurrentMode) cleanupCurrentMode();
+      btnPty.classList.add("active");
+      btnWasm.classList.remove("active");
+      statusEl.className = "badge";
+      statusEl.textContent = "Connecting to PTY WebSocket (/ws)…";
+
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${proto}//${location.host}/ws`;
+      const ws = new WebSocket(wsUrl);
+      let connected = false;
+
+      ws.onopen = () => {
+        connected = true;
+        statusEl.className = "badge ok";
+        statusEl.textContent = "🔌 Connected to Native Ruby PTY (./bin/snake-tui)";
+        term.write("\x1b[2J\x1b[?25l");
+        term.focus();
+      };
+
+      ws.onmessage = (ev) => {
+        term.write(ev.data);
+      };
+
+      ws.onerror = () => {
+        if (!connected && fallbackToWasmOnError) {
+          startWasmBridge();
+        }
+      };
+
+      ws.onclose = () => {
+        if (!connected && fallbackToWasmOnError) return;
+        statusEl.className = "badge";
+        statusEl.textContent = "🔌 PTY Session Closed (click Restart or Static Ruby WASM)";
+      };
+
+      activeSendKey = (rawKey) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(rawKey);
+        }
+      };
+
+      cleanupCurrentMode = () => {
+        ws.onclose = null;
+        ws.close();
+      };
+    }
+
+    btnWasm.addEventListener("click", () => startWasmBridge());
+    btnPty.addEventListener("click", () => startPtyBridge(false));
+
+    // Auto-select mode: if ?mode=wasm is set, use Static WASM; otherwise try local PTY first and auto-fallback to Static WASM!
+    const params = new URLSearchParams(location.search);
+    if (params.get("mode") === "wasm") {
+      startWasmBridge();
+    } else if (params.get("mode") === "pty") {
+      startPtyBridge(false);
+    } else {
+      startPtyBridge(true);
+    }
+  </script>
+</body>
+</html>

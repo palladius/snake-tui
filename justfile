@@ -11,6 +11,10 @@ play *ARGS:
 run *ARGS:
     ./bin/snake-tui {{ARGS}}
 
+# Launch the Web Pseudo-Terminal Bridge (Static Ruby WASM + Native PTY WebSocket)
+web PORT="4567":
+    ./bin/snake-tui-web {{PORT}}
+
 # Run the Minitest suite
 test:
     ruby test/test_snake_tui.rb

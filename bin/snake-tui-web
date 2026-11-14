@@ -1,0 +1,198 @@
+#!/usr/bin/env ruby
+
+=begin
+Zero-dependency HTTP + WebSocket PTY Bridge for `snake-tui`.
+Uses only Ruby's standard library (`socket`, `pty`, `io/console`, `digest/sha1`, `base64`):
+1) Serves static files from the repository root (`/` -> `/web/index.html`, `/lib/snake_tui/*.rb`)
+   so the browser can also run the untouched `.rb` files via `@ruby/3.3-wasm-wasi`.
+2) Upgrades `/ws` requests to RFC 6455 WebSockets and spawns a real `./bin/snake-tui`
+   pseudo-terminal (`PTY.spawn`), streaming raw ANSI output to `xterm.js` and forwarding
+   keystrokes from the browser back into the Ruby TUI process.
+=end
+
+require "socket"
+require "pty"
+require "io/console"
+require "digest/sha1"
+require "base64"
+require "uri"
+
+PORT = (ARGV[0] || ENV["PORT"] || 4567).to_i
+BIND = ENV["BIND"] || "0.0.0.0"
+ROOT = File.expand_path("..", __dir__)
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+MIME_TYPES = {
+  ".html" => "text/html; charset=utf-8",
+  ".js"   => "application/javascript; charset=utf-8",
+  ".css"  => "text/css; charset=utf-8",
+  ".rb"   => "text/plain; charset=utf-8",
+  ".md"   => "text/markdown; charset=utf-8",
+  ".png"  => "image/png",
+  ".svg"  => "image/svg+xml"
+}.freeze
+
+def ws_send_text(sock, str)
+  bytes = str.b
+  len = bytes.bytesize
+  header = +""
+  header << [0x81].pack("C") # FIN + text frame
+  if len < 126
+    header << [len].pack("C")
+  elsif len < 65_536
+    header << [126, len].pack("Cn")
+  else
+    header << [127, len].pack("CQ>")
+  end
+  sock.write(header + bytes)
+  sock.flush
+end
+
+def ws_read_frame(sock)
+  first_two = sock.read(2)
+  return nil unless first_two && first_two.bytesize == 2
+
+  b0, b1 = first_two.unpack("CC")
+  opcode = b0 & 0x0f
+  return :close if opcode == 0x8
+
+  masked = (b1 & 0x80) != 0
+  len = b1 & 0x7f
+  if len == 126
+    ext = sock.read(2)
+    return nil unless ext
+    len = ext.unpack1("n")
+  elsif len == 127
+    ext = sock.read(8)
+    return nil unless ext
+    len = ext.unpack1("Q>")
+  end
+
+  mask_key = masked ? sock.read(4)&.bytes : nil
+  payload = len > 0 ? sock.read(len) : +""
+  return nil unless payload
+
+  if masked && mask_key
+    unmasked = payload.bytes.each_with_index.map { |b, i| b ^ mask_key[i % 4] }
+    payload = unmasked.pack("C*").force_encoding("UTF-8")
+  end
+  payload
+end
+
+def handle_websocket(client, query_string)
+  diff_flag = "--medium"
+  if query_string.to_s.include?("difficulty=easy")
+    diff_flag = "--easy"
+  elsif query_string.to_s.include?("difficulty=hard")
+    diff_flag = "--hard"
+  end
+
+  cmd = File.join(ROOT, "bin", "snake-tui")
+  PTY.spawn({ "TERM" => "xterm-256color" }, "ruby", cmd, diff_flag, "-W", "28", "-H", "18") do |pty_out, pty_in, pid|
+    begin
+      pty_in.winsize = [26, 62] if pty_in.respond_to?(:winsize=)
+    rescue StandardError
+      nil
+    end
+
+    reader = Thread.new do
+      begin
+        loop do
+          data = pty_out.readpartial(4096)
+          ws_send_text(client, data)
+        end
+      rescue StandardError
+        nil
+      end
+    end
+
+    begin
+      loop do
+        frame = ws_read_frame(client)
+        break if frame.nil? || frame == :close
+        pty_in.write(frame)
+        pty_in.flush
+      end
+    rescue StandardError
+      nil
+    ensure
+      reader.kill
+      begin
+        Process.kill("TERM", pid)
+        Process.wait(pid)
+      rescue StandardError
+        nil
+      end
+    end
+  end
+end
+
+def handle_http(client)
+  request_line = client.gets
+  return unless request_line
+
+  _method, raw_path, _version = request_line.split(" ", 3)
+  headers = {}
+  while (line = client.gets) && line != "\r\n"
+    k, v = line.split(":", 2)
+    headers[k.strip.downcase] = v.strip if k && v
+  end
+
+  path, query = raw_path.to_s.split("?", 2)
+  path = URI.decode_www_form_component(path || "/")
+
+  if path == "/ws" && headers["upgrade"]&.downcase == "websocket"
+    key = headers["sec-websocket-key"]
+    accept = Base64.strict_encode64(Digest::SHA1.digest("#{key}#{WS_GUID}"))
+    client.write(
+      "HTTP/1.1 101 Switching Protocols\r\n" \
+      "Upgrade: websocket\r\n" \
+      "Connection: Upgrade\r\n" \
+      "Sec-WebSocket-Accept: #{accept}\r\n\r\n"
+    )
+    client.flush
+    handle_websocket(client, query)
+    return
+  end
+
+  rel_path = (path == "/" || path == "/web" || path == "/web/") ? "/web/index.html" : path
+  safe_path = File.expand_path(".#{rel_path}", ROOT)
+
+  if safe_path.start_with?(ROOT) && File.file?(safe_path)
+    body = File.binread(safe_path)
+    ext = File.extname(safe_path).downcase
+    mime = MIME_TYPES[ext] || "application/octet-stream"
+    client.write(
+      "HTTP/1.1 200 OK\r\n" \
+      "Content-Type: #{mime}\r\n" \
+      "Content-Length: #{body.bytesize}\r\n" \
+      "Cache-Control: no-cache\r\n" \
+      "Connection: close\r\n\r\n"
+    )
+    client.write(body)
+  else
+    msg = "404 Not Found: #{path}\n"
+    client.write(
+      "HTTP/1.1 404 Not Found\r\n" \
+      "Content-Type: text/plain\r\n" \
+      "Content-Length: #{msg.bytesize}\r\n" \
+      "Connection: close\r\n\r\n#{msg}"
+    )
+  end
+ensure
+  client.close rescue nil
+end
+
+server = TCPServer.new(BIND, PORT)
+puts "🐍 SnakeTUI Web Bridge running at http://localhost:#{PORT}/"
+puts "   - Static Ruby 3.3 WASM mode: http://localhost:#{PORT}/web/index.html?mode=wasm"
+puts "   - Native Ruby PTY WebSocket: http://localhost:#{PORT}/web/index.html?mode=pty"
+$stdout.flush
+
+trap("INT")  { exit 0 }
+trap("TERM") { exit 0 }
+
+loop do
+  sock = server.accept
+  Thread.new(sock) { |c| handle_http(c) }
+end
