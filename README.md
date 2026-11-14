@@ -4,6 +4,8 @@
 
 🌐 **Play Live in Browser (CRuby 3.3 WebAssembly + xterm.js):** **[https://palladius.github.io/snake-tui/](https://palladius.github.io/snake-tui/)**
 
+![TUI Vim Snake Web Terminal](assets/screenshot-web.png)
+
 A colorful, nostalgic Nokia-inspired Terminal User Interface (TUI) Snake game written in pure **Ruby** (zero native compilation needed, ideal for headless Linux & Raspberry Pi) built from [`respec`'s `tui-vim-snake` specification](SPEC.md) — plus a **Dual-Engine Web Pseudo-Terminal Bridge** (`xterm.js` + `@ruby/3.3-wasm-wasi` static in-browser VM or native `PTY.spawn` WebSocket).
 
 ## ✨ Features
