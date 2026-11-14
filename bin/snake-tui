@@ -1,0 +1,121 @@
+#!/usr/bin/env ruby
+
+=begin
+CLI entry point for TUI Vim Snake (`snake-tui`).
+Supports:
+  -h, --help        Show usage and rules
+  -n, --dryrun      Render a single static preview frame and exit safely
+      --no-emoji    Use colored ASCII fallback instead of 🔵🔴🟡🟢🟣 emojis
+  -W, --width COLS  Set board width in cells (default: 24)
+  -H, --height ROWS Set board height in cells (default: 18)
+  -v, --version     Print version
+=end
+
+require "optparse"
+require "io/console"
+require_relative "../lib/snake_tui"
+
+options = {
+  width: 24,
+  height: 18,
+  no_emoji: false,
+  dryrun: false
+}
+
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: snake-tui [options]"
+
+  opts.on("-W", "--width COLS", Integer, "Board width in cells (default: 24)") do |w|
+    options[:width] = w.clamp(8, 60)
+  end
+
+  opts.on("-H", "--height ROWS", Integer, "Board height in cells (default: 18)") do |h|
+    options[:height] = h.clamp(8, 40)
+  end
+
+  opts.on("--no-emoji", "Fallback to colored ASCII glyphs for older terminals") do
+    options[:no_emoji] = true
+  end
+
+  opts.on("-n", "--dryrun", "Print a single initial board frame and exit") do
+    options[:dryrun] = true
+  end
+
+  opts.on("-v", "--version", "Show version") do
+    puts "snake-tui v#{SnakeTUI::VERSION}"
+    exit 0
+  end
+
+  opts.on("-h", "--help", "Show this help message") do
+    puts opts
+    puts <<~RULES
+
+      🐍 TUI Vim Snake Rules:
+        - Move strictly with Vim keys: H (Left), J (Down), K (Up), L (Right)
+        - Eat Google balls 🔵 🔴 🟡 🟢 (+10 pts, 92% spawn chance)
+        - Eat Super Rare Purple balls 🟣 (+50 pts, 8% spawn chance)
+        - Press R to restart on Game Over, Q to quit at any time.
+    RULES
+    exit 0
+  end
+end
+
+parser.parse!
+
+game = SnakeTUI::Game.new(width: options[:width], height: options[:height])
+renderer = SnakeTUI::Renderer.new(no_emoji: options[:no_emoji])
+
+if options[:dryrun]
+  puts renderer.render_to_string(game)
+  exit 0
+end
+
+# Interactive raw TUI loop
+begin
+  print "\e[?1049h\e[?25l\e[2J" # Alternate screen buffer, hide cursor, clear screen
+  $stdout.flush
+
+  STDIN.raw do |io|
+    until game.quit_requested?
+      tick_start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      print "\e[H"
+      print renderer.render_to_string(game)
+      $stdout.flush
+
+      # Poll non-blocking input until next tick is due
+      loop do
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - tick_start
+        remaining = game.tick_interval - elapsed
+        break if remaining <= 0
+
+        ready = IO.select([io], nil, nil, remaining)
+        next unless ready
+
+        ch = io.read_nonblock(1, exception: false)
+        next if ch.nil? || ch == :wait_readable
+
+        # Handle Ctrl+C gracefully
+        if ch == "\u0003"
+          game.handle_key("q")
+          break
+        end
+
+        # Drain escape sequences (e.g. arrow keys) so they don't leak letters
+        if ch == "\e"
+          while (extra = io.read_nonblock(1, exception: false)) && extra != :wait_readable
+            ch << extra
+          end
+        end
+
+        game.handle_key(ch)
+        break if game.quit_requested?
+      end
+
+      game.tick
+    end
+  end
+ensure
+  print "\e[?25h\e[?1049l" # Restore cursor and main screen buffer
+  $stdout.flush
+end
